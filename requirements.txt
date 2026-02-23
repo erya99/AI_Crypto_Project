@@ -1,0 +1,9 @@
+ccxt
+pandas
+numpy
+vaderSentiment
+nltk
+scikit-learn
+tensorflow
+plotly
+streamlit
