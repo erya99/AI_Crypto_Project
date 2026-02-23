@@ -74,7 +74,7 @@ if st.session_state.is_running:
 
             current_price = results['current_price']
             
-            # DÜZELTME: Sinyal üretirken geçmiş işlemleri (trade_history) bota gönderiyoruz
+            # Sinyal Üretimi
             signal, confidence = controller.signal_generator.generate_signal(
                 current_price, 
                 results['predicted_price'], 
@@ -91,28 +91,48 @@ if st.session_state.is_running:
             usdt_bal, coin_bal = trader.get_balances(symbol)
             total_val = usdt_bal + (coin_bal * current_price)
             
+            # METRİKLER (Anlık Fiyat Eklendi)
             with metric_place.container():
-                c1, c2, c3, c4 = st.columns(4)
+                c1, c2, c3, c4, c5 = st.columns(5) # 4 Sütundan 5 Sütuna çıkarıldı
                 c1.metric("USDT Bakiye", f"${usdt_bal:.2f}")
                 c2.metric("Coin Miktar", f"{coin_bal:.4f}")
                 c3.metric("Toplam Portföy", f"${total_val:.2f}")
                 
+                # YENİ EKLENEN KISIM: Seçili coinin anlık fiyatı
+                c4.metric(f"Anlık Fiyat ({symbol})", f"${current_price:.4f}")
+                
                 sig_color = "green" if signal == "BUY" else "red" if signal == "SELL" else "gray"
-                c4.markdown(f"### Sinyal: :{sig_color}[{signal}]")
+                c5.markdown(f"### Sinyal: :{sig_color}[{signal}]")
 
+            # GRAFİK DÜZENLEMELERİ
             df = results['dataframe']
+            
+            # 1. DÜZELTME: Milisaniye cinsinden gelen sayıyı okunabilir Tarih/Saat formatına çevir
+            formatted_dates = pd.to_datetime(df['timestamp'], unit='ms')
+
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
-            fig.add_trace(go.Candlestick(x=df['timestamp'], open=df['open'], high=df['high'],
+            
+            # X ekseni olarak sayıyı değil, formatlanmış tarihi veriyoruz
+            fig.add_trace(go.Candlestick(x=formatted_dates, open=df['open'], high=df['high'],
                             low=df['low'], close=df['close'], name='Fiyat'), row=1, col=1)
             
-            fig.add_trace(go.Scatter(x=df['timestamp'].tail(20), y=[results['predicted_price']]*20, 
+            fig.add_trace(go.Scatter(x=formatted_dates.tail(20), y=[results['predicted_price']]*20, 
                                      name='ML Tahmini', line=dict(color='orange', dash='dot')), row=1, col=1)
             
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=df['rsi_14'], name='RSI', line=dict(color='purple')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=formatted_dates, y=df['rsi_14'], name='RSI', line=dict(color='purple')), row=2, col=1)
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
             fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-            fig.update_layout(height=500, margin=dict(l=0, r=0, t=30, b=0))
-            chart_place.plotly_chart(fig, use_container_width=True)
+            
+            # 2. DÜZELTME: xaxis_rangeslider_visible=False ile alttaki bozan kaydırma çubuğunu gizledik
+            fig.update_layout(
+                height=500, 
+                margin=dict(l=20, r=20, t=40, b=20), 
+                xaxis_rangeslider_visible=False,
+                title_text=f"{symbol} Canlı Grafik Analizi"
+            )
+            
+            # 3. DÜZELTME: Terminaldeki uyarıyı gidermek için width='stretch' kullanıldı
+            chart_place.plotly_chart(fig, width="stretch")
             
             with log_place:
                 if is_traded: 
@@ -139,7 +159,6 @@ if st.session_state.is_running:
                 for log in reversed(trader.trade_history):
                     st.code(log)
             
-            # DÜZELTME: Daha anlamlı işlemler için bekleme süresi 60 saniyeye çıkarıldı
             time.sleep(60)
             
         except Exception as e:

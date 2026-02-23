@@ -45,15 +45,15 @@ class MainController:
         
         # 4. ML Tahmini (LSTM)
         print("4. Fiyat tahmini yapılıyor...")
-        X, y, scaler = self.ml_manager.prepare_data(df_analyzed)
-        if len(X) > 0:
-            lstm = LSTMModel(input_shape=(X.shape[1], X.shape[2]))
+        
+        # DÜZELTME: is_training=False ile çağırıyoruz. Sadece T+1 (gelecek) için son 60 mumu alır ve kayıtlı scaler'ı kullanır.
+        X_latest, _, scaler = self.ml_manager.prepare_data(df_analyzed, is_training=False)
+        
+        if X_latest is not None and len(X_latest) > 0:
+            lstm = LSTMModel(input_shape=(X_latest.shape[1], X_latest.shape[2]))
             
-            # DÜZELTME: lstm.train(...) KALDIRILDI! Model burada sadece tahmin yapacak.
-            # Öğrenme işini auto_learner.py yapıyor.
-            
-            last_sequence = X[-1].reshape(1, X.shape[1], X.shape[2])
-            predicted_scaled = lstm.predict(last_sequence)
+            # X_latest zaten modelin istediği formatta (1, 60, 2)
+            predicted_scaled = lstm.predict(X_latest)
             predicted_price = scaler.inverse_transform([[predicted_scaled[0][0], 0]])[0][0]
             results['predicted_price'] = float(predicted_price)
         else:
@@ -63,7 +63,6 @@ class MainController:
         print("5. Sinyal üretiliyor...")
         current_price = df_analyzed['close'].iloc[-1]
         
-        # Trade geçmişini almak için (Geçici boş liste veriyoruz, asıl geçmiş app.py'de)
         signal, confidence = self.signal_generator.generate_signal(
             current_price, 
             results['predicted_price'], 

@@ -6,10 +6,11 @@ from sklearn.metrics import mean_absolute_error
 from sklearn.preprocessing import MinMaxScaler
 import tensorflow as tf
 import os
+import joblib # YENİ: Scaler'ı kaydedip yüklemek için eklendi
 
 class BaseMLModel:
     """
-    SDD Bölüm 5.3.4: Tüm ML modelleri için temel sınıf (Strategy Pattern).
+    Tüm ML modelleri için temel sınıf (Strategy Pattern).
     """
     def train(self, X, y):
         raise NotImplementedError
@@ -22,9 +23,6 @@ class BaseMLModel:
         return mean_absolute_error(y, predictions)
 
 class LinearRegressionModel(BaseMLModel):
-    """
-    FR-15: Basit fiyat tahmini için Doğrusal Regresyon.
-    """
     def __init__(self):
         self.model = LinearRegression()
         
@@ -35,9 +33,6 @@ class LinearRegressionModel(BaseMLModel):
         return self.model.predict(X)
 
 class RandomForestModel(BaseMLModel):
-    """
-    FR-16: Karmaşık ilişkileri yakalamak için Random Forest.
-    """
     def __init__(self):
         self.model = RandomForestRegressor(n_estimators=100, random_state=42)
         
@@ -49,17 +44,14 @@ class RandomForestModel(BaseMLModel):
 
 class LSTMModel(BaseMLModel):
     """
-    FR-17: Zaman serisi tahmini için LSTM (Derin Öğrenme).
-    Modeli kaydeder ve yükler (Save/Load), böylece her seferinde eğitim yapmaz.
+    Zaman serisi tahmini için LSTM (Derin Öğrenme).
     """
     def __init__(self, input_shape):
-        self.model_path = "data/lstm_model.keras" # Modelin kaydedileceği yer
+        self.model_path = "data/lstm_model.keras" 
         self.input_shape = input_shape
         
-        # Eğer kayıtlı model varsa onu yükle, yoksa yeni oluştur
         if os.path.exists(self.model_path):
             try:
-                # print("💾 Kayıtlı model yükleniyor...") # Konsolu kirletmemek için kapalı
                 self.model = tf.keras.models.load_model(self.model_path)
             except Exception as e:
                 print(f"Model yükleme hatası, yeniden oluşturuluyor: {e}")
@@ -70,21 +62,25 @@ class LSTMModel(BaseMLModel):
     def _build_model(self):
         """Model mimarisini oluşturur"""
         self.model = tf.keras.models.Sequential()
-        # Input katmanı ayrı eklendi (Keras 3.0 uyarısını çözer)
         self.model.add(tf.keras.layers.Input(shape=self.input_shape))
         self.model.add(tf.keras.layers.LSTM(50, return_sequences=True))
+        
+        # 3. DÜZELTME (OVERFITTING): Dropout eklendi (%20 unutma oranı)
+        self.model.add(tf.keras.layers.Dropout(0.2)) 
+        
         self.model.add(tf.keras.layers.LSTM(50, return_sequences=False))
+        
+        # 3. DÜZELTME (OVERFITTING): İkinci Dropout eklendi
+        self.model.add(tf.keras.layers.Dropout(0.2))
+        
         self.model.add(tf.keras.layers.Dense(25))
         self.model.add(tf.keras.layers.Dense(1))
         self.model.compile(optimizer='adam', loss='mean_squared_error')
         
     def train(self, X, y, epochs=5, batch_size=32):
-        # Modeli eğit
         self.model.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=0)
-        # Eğitilen modeli kaydet
         try:
             self.model.save(self.model_path)
-            # print("💾 Model güncellendi ve kaydedildi.")
         except Exception as e:
             print(f"Model kayıt hatası: {e}")
         
@@ -95,40 +91,43 @@ class MLManager:
     """
     Veriyi hazırlayıp modelleri yöneten yardımcı sınıf.
     """
-    def prepare_data(self, df, feature_cols=['close', 'volume'], target_col='close', lookback=60):
+    def __init__(self):
+        self.scaler_path = "data/scaler.save"
+
+    def prepare_data(self, df, feature_cols=['close', 'volume'], target_col='close', lookback=60, is_training=True):
         """
-        Veriyi ML formatına çevirir. LSTM için 3D array oluşturur.
+        is_training=True ise modeli eğitmek için X,y üretir ve scaler kaydeder.
+        is_training=False ise canlı trade için sadece son 60 mumu verir ve kayıtlı scaler'ı yükler.
         """
         if len(df) < lookback:
             return np.array([]), np.array([]), None
 
         data = df[feature_cols].values
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(data)
         
-        X, y = [], []
-        for i in range(lookback, len(scaled_data)):
-            X.append(scaled_data[i-lookback:i])
-            y.append(scaled_data[i, 0]) # Hedef: close price
-            
-        return np.array(X), np.array(y), scaler
-
-# Test Bloğu
-if __name__ == "__main__":
-    # Rastgele veri ile test
-    df_test = pd.DataFrame({
-        'close': np.random.rand(100) * 100,
-        'volume': np.random.rand(100) * 1000
-    })
-    
-    manager = MLManager()
-    X, y, scaler = manager.prepare_data(df_test, lookback=10)
-    
-    if len(X) > 0:
-        # LSTM Testi
-        lstm = LSTMModel(input_shape=(X.shape[1], X.shape[2]))
-        try:
-            lstm.train(X, y, epochs=1)
-            print("LSTM Eğitimi ve Kaydı Başarılı!")
-        except Exception as e:
-            print(f"Hata: {e}")
+        # 2. DÜZELTME (TRAINING-SERVING SKEW): Scaler kaydetme ve yükleme
+        if is_training:
+            scaler = MinMaxScaler(feature_range=(0, 1))
+            scaled_data = scaler.fit_transform(data)
+            os.makedirs("data", exist_ok=True)
+            joblib.dump(scaler, self.scaler_path) # Eğitilen scaler'ı kaydet
+        else:
+            if os.path.exists(self.scaler_path):
+                scaler = joblib.load(self.scaler_path) # Canlıda aynı scaler'ı yükle
+                scaled_data = scaler.transform(data)   # fit_transform DEĞİL, transform yap!
+            else:
+                print("⚠️ Scaler dosyası bulunamadı, fallback yapılıyor.")
+                scaler = MinMaxScaler(feature_range=(0, 1))
+                scaled_data = scaler.fit_transform(data)
+        
+        # 1. DÜZELTME (LOOKAHEAD BIAS): X ve y'yi doğru ayırma
+        if is_training:
+            X, y = [], []
+            for i in range(lookback, len(scaled_data)):
+                X.append(scaled_data[i-lookback:i])
+                y.append(scaled_data[i, 0]) 
+            return np.array(X), np.array(y), scaler
+        else:
+            # Canlı sistem (Inference): Bize sadece GELECEĞİ (T+1) tahmin etmek için
+            # EN SON lookback kadar veri (örneğin son 60 mum) lazım.
+            X_latest = scaled_data[-lookback:]
+            return np.array([X_latest]), None, scaler
