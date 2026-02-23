@@ -10,7 +10,7 @@ from database_manager import DatabaseManager
 
 class MainController:
     """
-    SDD Bölüm 4.6.3: Tüm sistemi koordine eden ana sınıf.
+    Tüm sistemi koordine eden ana sınıf.
     """
     def __init__(self):
         self.db = DatabaseManager()
@@ -21,9 +21,6 @@ class MainController:
         self.ml_manager = MLManager()
         
     def run_analysis(self, symbol='BTC/USDT'):
-        """
-        Kullanıcı 'Analizi Başlat' dediğinde çalışacak ana fonksiyon.
-        """
         results = {}
         
         # 1. Veri Toplama
@@ -42,7 +39,7 @@ class MainController:
         
         # 3. Duygu Analizi
         print("3. Duygu analizi yapılıyor...")
-        news_texts = [n['title'] for n in news_list] # Sadece başlıkları analiz ediyoruz
+        news_texts = [n['title'] for n in news_list]
         sentiment_score = self.sentiment_analyzer.aggregate_scores(news_texts)
         results['sentiment_score'] = sentiment_score
         
@@ -50,18 +47,14 @@ class MainController:
         print("4. Fiyat tahmini yapılıyor...")
         X, y, scaler = self.ml_manager.prepare_data(df_analyzed)
         if len(X) > 0:
-            # Model boyutunu ayarla
             lstm = LSTMModel(input_shape=(X.shape[1], X.shape[2]))
-            # Gerçek senaryoda önceden eğitilmiş model yüklenir, burada demo için anlık eğitiyoruz
-            lstm.train(X, y, epochs=1) 
             
-            # Son veriye göre tahmin
+            # DÜZELTME: lstm.train(...) KALDIRILDI! Model burada sadece tahmin yapacak.
+            # Öğrenme işini auto_learner.py yapıyor.
+            
             last_sequence = X[-1].reshape(1, X.shape[1], X.shape[2])
             predicted_scaled = lstm.predict(last_sequence)
-            predicted_price = scaler.inverse_transform([[predicted_scaled[0][0], 0]])[0][0] # Dummy inverse
-            
-            # Not: Scaler inverse işlemi basitleştirildi, normalde tam ters dönüşüm gerekir.
-            # Hızlı çözüm için sadece close fiyatı üzerinden gidilebilir.
+            predicted_price = scaler.inverse_transform([[predicted_scaled[0][0], 0]])[0][0]
             results['predicted_price'] = float(predicted_price)
         else:
             results['predicted_price'] = df_analyzed['close'].iloc[-1]
@@ -69,6 +62,8 @@ class MainController:
         # 5. Sinyal Üretimi
         print("5. Sinyal üretiliyor...")
         current_price = df_analyzed['close'].iloc[-1]
+        
+        # Trade geçmişini almak için (Geçici boş liste veriyoruz, asıl geçmiş app.py'de)
         signal, confidence = self.signal_generator.generate_signal(
             current_price, 
             results['predicted_price'], 
@@ -81,8 +76,3 @@ class MainController:
         results['current_price'] = current_price
         
         return results
-
-if __name__ == "__main__":
-    controller = MainController()
-    res = controller.run_analysis()
-    print(f"SONUÇ: {res['signal']} (Güven: {res['confidence']:.2f})")

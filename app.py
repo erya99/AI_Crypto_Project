@@ -11,18 +11,17 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from main_controller import MainController
 from trader import Trader
 
-st.set_page_config(page_title="AI Pro Trade Bot", layout="wide", page_icon="🤑")
+@st.cache_resource
+def get_controller():
+    return MainController()
 
+st.set_page_config(page_title="AI Pro Trade Bot", layout="wide", page_icon="🤑")
 st.title("🤑 AI Algoritmik Trade Botu (Dual Mode)")
 
-# --- KENAR ÇUBUĞU ---
 with st.sidebar:
     st.header("⚙️ Konfigürasyon")
-    
-    # 1. Mod Seçimi
     trade_mode = st.radio("Çalışma Modu", ["PAPER (Sanal)", "REAL (Gerçek)"])
     
-    # 2. Gerçek Mod İçin API Girişi
     api_key = None
     api_secret = None
     if trade_mode == "REAL (Gerçek)":
@@ -34,14 +33,12 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Botu Başlat/Durdur
     if 'is_running' not in st.session_state:
         st.session_state.is_running = False
         
     start_btn = st.button("▶️ Botu Başlat" if not st.session_state.is_running else "⏹️ Botu Durdur")
     if start_btn:
         st.session_state.is_running = not st.session_state.is_running
-        # Trader nesnesini her başlatmada yeniden oluştur (Ayarlar değişmiş olabilir)
         mode_code = 'REAL' if trade_mode == "REAL (Gerçek)" else 'PAPER'
         try:
             st.session_state.trader = Trader(mode=mode_code, api_key=api_key, api_secret=api_secret)
@@ -50,22 +47,25 @@ with st.sidebar:
             st.error(f"Başlatma Hatası: {e}")
             st.session_state.is_running = False
 
-# --- ANA EKRAN ---
 status_place = st.empty()
 metric_place = st.empty()
 chart_place = st.empty()
 log_place = st.container()
 
 if st.session_state.is_running:
-    controller = MainController()
+    controller = get_controller()
     trader = st.session_state.trader
     
+    if trader is None:
+        st.error("Lütfen botu durdurup tekrar başlatın.")
+        st.stop()
+
     while st.session_state.is_running:
         try:
             with status_place.container():
-                st.info(f"📡 {symbol} piyasası taranıyor... [{datetime.now().strftime('%H:%M:%S')}]")
+                st.info(f"📡 {symbol} piyasası taranıyor... Son Güncelleme: {datetime.now().strftime('%H:%M:%S')}")
             
-            # 1. Analiz
+            # Analiz
             results = controller.run_analysis(symbol)
             if "error" in results:
                 st.error(results["error"])
@@ -73,13 +73,21 @@ if st.session_state.is_running:
                 continue
 
             current_price = results['current_price']
-            signal = results['signal']
+            
+            # DÜZELTME: Sinyal üretirken geçmiş işlemleri (trade_history) bota gönderiyoruz
+            signal, confidence = controller.signal_generator.generate_signal(
+                current_price, 
+                results['predicted_price'], 
+                results['sentiment_score'], 
+                results['dataframe'],
+                trader.trade_history
+            )
+            
             timestamp = results['dataframe']['timestamp'].iloc[-1]
             
-            # 2. İşlem
+            # İşlem Denemesi
             is_traded, log_msg = trader.execute_trade(signal, symbol, current_price, timestamp)
             
-            # 3. Bakiyeleri Güncelle
             usdt_bal, coin_bal = trader.get_balances(symbol)
             total_val = usdt_bal + (coin_bal * current_price)
             
@@ -92,12 +100,11 @@ if st.session_state.is_running:
                 sig_color = "green" if signal == "BUY" else "red" if signal == "SELL" else "gray"
                 c4.markdown(f"### Sinyal: :{sig_color}[{signal}]")
 
-            # 4. Grafik (Basitleştirilmiş canlı grafik)
             df = results['dataframe']
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
             fig.add_trace(go.Candlestick(x=df['timestamp'], open=df['open'], high=df['high'],
                             low=df['low'], close=df['close'], name='Fiyat'), row=1, col=1)
-            # ML Tahmin Çizgisi (Son 20 veri + 1 gelecek)
+            
             fig.add_trace(go.Scatter(x=df['timestamp'].tail(20), y=[results['predicted_price']]*20, 
                                      name='ML Tahmini', line=dict(color='orange', dash='dot')), row=1, col=1)
             
@@ -107,18 +114,34 @@ if st.session_state.is_running:
             fig.update_layout(height=500, margin=dict(l=0, r=0, t=30, b=0))
             chart_place.plotly_chart(fig, use_container_width=True)
             
-            # 5. Loglar
             with log_place:
-                if is_traded: st.toast(log_msg, icon="🔔")
+                if is_traded: 
+                    st.success(f"İŞLEM YAPILDI: {log_msg}")
+                else:
+                    if signal == "HOLD":
+                        reason = "Sinyal Nötr (HOLD) / Yetersiz Güven Skoru"
+                        icon = "⏳"
+                    elif trader.in_position and signal == "BUY":
+                        reason = "Zaten Alım Yapılmış"
+                        icon = "🔒"
+                    elif not trader.in_position and signal == "SELL":
+                        reason = "Satılacak Coin Yok"
+                        icon = "🚫"
+                    else:
+                        reason = "Bakiye Yetersiz"
+                        icon = "⚠️"
+                        
+                    st.info(f"{icon} Durum: Beklemede... Sebep: {reason}")
+
                 st.subheader("📜 İşlem Geçmişi")
+                if not trader.trade_history:
+                    st.text("Henüz işlem kaydı yok.")
                 for log in reversed(trader.trade_history):
                     st.code(log)
             
-            # Döngü Bekleme Süresi (Gerçek işlemde API limitleri için min 10-30sn önerilir)
-            time.sleep(15)
+            # DÜZELTME: Daha anlamlı işlemler için bekleme süresi 60 saniyeye çıkarıldı
+            time.sleep(60)
             
         except Exception as e:
             st.error(f"Kritik Döngü Hatası: {e}")
             time.sleep(10)
-else:
-    status_place.warning("Bot durduruldu. Ayarları yapıp 'Botu Başlat' butonuna basın.")

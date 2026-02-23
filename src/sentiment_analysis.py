@@ -3,16 +3,27 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 class SentimentAnalysis:
     """
     SDD Bölüm 5.3.3 uyarınca Duygu Analizi Sınıfı.
-    VADER algoritması kullanarak metinleri analiz eder.
+    VADER algoritması kullanarak metinleri analiz eder. Kripto sözlüğü eklenmiştir.
     """
     
     def __init__(self):
         self.analyzer = SentimentIntensityAnalyzer()
+        
+        # Kripto Jargonunu VADER'a öğretiyoruz (ÖZEL EKLENTİ)
+        crypto_lexicon = {
+            'bullish': 2.0, 'bearish': -2.0, 
+            'moon': 2.0, 'rekt': -2.0, 
+            'dump': -2.0, 'pump': 2.0, 
+            'ath': 1.5, 'hack': -2.0, 
+            'scam': -2.0, 'fud': -1.5,
+            'surge': 1.5, 'plunge': -1.5
+        }
+        self.analyzer.lexicon.update(crypto_lexicon)
 
     def analyze_text(self, text):
         """
-        FR-11, FR-12: Tek bir metin için duygu skoru üretir.
-        Dönüş: -1 (Çok Negatif) ile +1 (Çok Pozitif) arası float değer (compound score).
+        Tek bir metin için duygu skoru üretir.
+        Dönüş: -1 (Çok Negatif) ile +1 (Çok Pozitif) arası float değer.
         """
         if not text:
             return 0.0
@@ -22,8 +33,7 @@ class SentimentAnalysis:
 
     def aggregate_scores(self, news_list):
         """
-        FR-13: Birden fazla haberin ortalama duygu skorunu hesaplar.
-        news_list: Haber metinlerinden oluşan bir liste ['Haber 1', 'Haber 2'...]
+        Birden fazla haberin ortalama duygu skorunu hesaplar.
         """
         if not news_list:
             return 0.0
@@ -40,9 +50,3 @@ class SentimentAnalysis:
             return 0.0
             
         return total_score / count
-
-# Basit bir test bloğu
-if __name__ == "__main__":
-    sa = SentimentAnalysis()
-    test_news = "Bitcoin hits a new all-time high as investors are very excited!"
-    print(f"Test Skoru: {sa.analyze_text(test_news)}")
