@@ -132,7 +132,7 @@ if st.session_state.is_running:
             )
             
             # 3. DÜZELTME: Terminaldeki uyarıyı gidermek için width='stretch' kullanıldı
-            chart_place.plotly_chart(fig, width="stretch")
+            chart_place.plotly_chart(fig, width="stretch", key=f"chart_{int(time.time())}")
             
             with log_place:
                 if is_traded: 
